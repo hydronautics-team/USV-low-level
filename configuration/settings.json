@@ -1,0 +1,64 @@
+{
+    "Mode": {
+        "ID" : 0,
+        "launch_mode" : "model",
+        "launch_mode_2" : "realAUV"    
+    },
+    
+    "Pult": {
+		"type": "udp",
+		"receiver": {
+                "frequency": "250",
+		        "ip": "127.0.0.1",
+		        "port": "27003",
+		        "type": "udp"
+		},
+		"sender": {
+		        "frequency": "250",
+		        "ip": "127.0.0.1",
+		        "port": "27002",
+		        "type": "udp"
+		}
+	},
+
+    "BW-AH127C": {
+		"device": "/ttyUSB1",
+		"frequency": "10",
+		"parity": "false",
+		"speed": "115200",
+		"twoStopBits": "false"
+	}, 
+	
+    "Diagnostic": {
+		"device": "uart",
+		"frequency": "10",
+		"parity": "false",
+		"speed": "115200",
+		"twoStopBits": "false"    		
+   	},	
+
+    "Hydroacoustics": {
+		"device": "/ttyUSB2",
+		"frequency": "10",
+		"parity": "false",
+		"speed": "115200",
+		"twoStopBits": "false"
+	},
+	
+    "Echolot": {
+		"device": "/ttyUSB3",
+		"frequency": "10",
+		"parity": "false",
+		"speed": "9600",
+		"twoStopBits": "false"    
+    },
+
+	"GPS": {
+		"device": "/ttyUSB4",
+		"frequency": "10",
+		"parity": "false",
+		"speed": "9600",
+		"twoStopBits": "false"    
+    }
+	
+}
