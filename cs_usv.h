@@ -8,6 +8,8 @@
 #include "protocol_echolot/PA500.h"
 #include "protocol_GPS/nmea0183.h"
 #include "diagnostic_board/diagnostic_board.h"
+#include "coordSSP/coordssp.h"
+#include"logger/logger.h"
 #include <QThread>
 #include <QSettings>
 #include "math.h"
@@ -43,6 +45,7 @@ public:
     float saturation(float input,  float max, float min);
     double yawErrorCalculation(float yawDesiredDeg, float yawCurrentDeg);
     int sign(double input);
+    float i = 1.5;
 
 public slots:
     void tick();
@@ -73,20 +76,27 @@ protected:
     void aperiodicFilter(double &input, double &output, double &prevOutput, double K, double T, double dt);
     void JSON_init();
 
-    AH127Cprotocol *AH127C = nullptr;
-    ProtocolZIMA *GANS = nullptr;
     ControlSystem::PC_Protocol *auvProtocol = nullptr;
     VMA_control *vmaProtocol = nullptr;
-    PA500 *echolot = nullptr;
-    NMEA::NMEA0183 *GPS = nullptr;
-
+    AH127Cprotocol *AH127C = nullptr;
     Diagnostic_board *diagnostic = nullptr;
+    ProtocolZIMA *GANS = nullptr;
+    NMEA::NMEA0183 *gpsProt = nullptr;
+    PA500 *echolot = nullptr;
+    Logger *logger = nullptr;
+    CoordSSP *ssp = nullptr;
+    CoordinatePoint current_point;
+
+    QThread vmaThread;
 
     QTimer timer;
     QTime timeRegulator;
     QTime timeYaw;
 
+    QString connect_BSO = 0;
+
     quint8 modellingFlag = 1;
+    quint8 flag_reper_on = 0;
     quint8 flag_of_mode = 100;
     quint8 contour_closure_yaw = 0;
     quint8 contour_closure_pitch = 0;

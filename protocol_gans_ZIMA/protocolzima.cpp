@@ -21,7 +21,8 @@ ProtocolZIMA::ProtocolZIMA(QString portName, int baudRate,
         qDebug()<<" port was opened";
     }
     else {
-        qDebug()<<" error open port "<< zima.errorString();
+        qDebug()<<" error open port zima"<< zima.errorString();
+        return;
     }
 
     connect(&zima, &QSerialPort::readyRead, this, [this]()
@@ -74,7 +75,7 @@ void ProtocolZIMA::parseBuffer()
 
 }
 
-Title stringToTitle(const QByteArray tit) {
+TitleZIMA stringToTitle(const QByteArray tit) {
     if (tit == "PZMAE") return PZMAE;
     if (tit == "PZMAF") return PZMAF;
     if (tit == "PZMAG") return PZMAG;
@@ -84,7 +85,7 @@ Title stringToTitle(const QByteArray tit) {
 
 void ProtocolZIMA::findTitle(qint8 index, qint8 crc_in, uint end, QByteArray title)
 {
-    Title titleEnum = stringToTitle(title);
+    TitleZIMA titleEnum = stringToTitle(title);
     int count;
     QByteArray msg;
 

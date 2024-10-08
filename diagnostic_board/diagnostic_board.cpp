@@ -15,7 +15,8 @@ Diagnostic_board::Diagnostic_board(QString portName, int baudRate, QObject *pare
         qDebug()<<" port was opened";
     }
     else {
-        qDebug()<<" error open port "<< diagnostic.errorString();
+        qDebug()<<" error open port diagnostic"<< diagnostic.errorString();
+        return;
        }
     connect(&diagnostic, &QSerialPort::readyRead, this, &Diagnostic_board::getdata);
 }

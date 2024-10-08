@@ -11,33 +11,49 @@ enum class e_CSMode : quint8
 { //режим работы
     MODE_MANUAL = 0, //ручной
     MODE_AUTOMATED, //автоматизированный
-    MODE_AUTOMATIC, //автоматический
-    MODE_GROUP //групповой
+    MODE_AUTOMATIC //автоматический
 };
 
 enum class power_Mode : quint8
 { //режим работы
-    MODE_2 = 0, //включены вычислитель, wifi, uwb
-    MODE_3, //включены вычислитель, wifi, uwb, гидроакустика
-    MODE_4, //включены вычислитель, wifi, uwb, гидроакустика, ВМА
-    MODE_5 //выключить вычислитель на 5 секунд и включить обратно
+    MODE_2 = 0, //на винтомоторы не идет шим
+    MODE_3 //на винтоморы идет шим, можно управлять
+};
+
+enum class mission_List : quint8
+{ //список миссий
+    NO_MISSION = 0, //нет миссии
+    MOVE_TO_POINT, //выход в точку
+    KEEP_POS, //удержание в точке
+    MOVE_CIRCLE, //движение по окружности
+    MOVE_TACK //движение галсами
+};
+
+struct CoordinatePoint
+{
+    double x_point = 0;
+    double y_point = 0;
+};
+
+struct MissionParam
+{
+    float radius;
+    CoordinatePoint point_mission;
+    CoordinatePoint first_point_tack;
+    CoordinatePoint second_point_tack;
 };
 
 enum class mission_Control : quint8
 { //команды управления миссией
     MODE_IDLE = 0, //ожидание
     MODE_START, //отправка запроса на выполнение миссии
-    MODE_CANCEL, //отмена выполнения миссии
-    MODE_STOP, //пауза, остановить временно
     MODE_COMPLETE //завершить миссию
 };
 
 enum class mission_Status : quint8
 { //состояние миссии
     MODE_IDLE = 0, //ожидание
-    MODE_ERROR, //ошибка инициализации миссии
     MODE_RUNNING, //миссия запущена и выполняется
-    MODE_STOPPED, //миссия приостановлена, на паузе
     MODE_PERFOMED, //миссия завершена
 };
 
@@ -141,26 +157,26 @@ struct DataGANS
 struct GPS_angular
 {
     QTime time_UTC;    // Время UTC
-    double yaw;        // Курс (рысканье)
-    double pitch;      // Килевая качка
-    double roll;       // Бортовая качка
-    QString dataType;  // Тип данных (N - курс от GPS, G - гиро курс)
+    double yaw = 0;        // Курс (рысканье)
+    double pitch = 0;      // Килевая качка
+    double roll = 0;       // Бортовая качка
+    char dataType = 'N';  // Тип данных (N - курс от GPS, G - гиро курс)
 };
 
 struct GPS_coordinate
 {
     QTime time;           // UTC Время обсервации
     double latitude;      // Широта
-    QString latHemisphere;// Полушарие (N/S)
+    char latHemisphere;// Полушарие (N/S)
     double longitude;     // Долгота
-    QString lonHemisphere;// Полушарие (E/W)
+    char lonHemisphere;// Полушарие (E/W)
     int quality;          // Индикатор качества обсервации
     int satellitesUsed;   // Количество спутников
     double hdop;          // Величина горизонтального геометрического фактора (HDOP)
     double altitude;      // Высота антенны над уровнем моря (геоидом)
-    QString altitudeUnit; // Единица измерения высоты (м)
+    char altitudeUnit; // Единица измерения высоты (м)
     double geoidHeight;   // Превышение геоида над эллипсоидом WGS84
-    QString geoidUnit;    // Единица измерения превышения геоида (м)
+    char geoidUnit;    // Единица измерения превышения геоида (м)
     double dgpsAge = 0;       // Возраст дифференциальной поправки
     int dgpsStationId = 0;    // Идентификатор ККС
 };
@@ -197,8 +213,9 @@ struct ToPult
     GPS_angular angularGPS;
     GPS_coordinate coordinateGPS;
     Diagnostic diagnostics;
-    quint8 ID_mission = 0;
-    mission_Status missionStatus = mission_Status::MODE_IDLE;
+    mission_List missionList = mission_List::NO_MISSION; //выбор миссии
+    mission_Status missionStatus = mission_Status::MODE_IDLE; //состояние выполнения миссии
+    quint8 first_point_complete; //флаг прохождения точки для движения галсами
     uint checksum;
 };
 
@@ -211,8 +228,10 @@ struct FromPult
     quint8 modeAUV_selection = 1;//текущий выбор модель/реальный НПА
     power_Mode pMode = power_Mode::MODE_2; //режим работы системы питания, структура с желаемыми параметрами системы питания
     FlagAH127C_pult flagAH127C_pult;
-    quint8 ID_mission_AUV = 0;
-    mission_Control missionControl = mission_Control::MODE_IDLE;
+    CoordinatePoint reper; //координаты выставленного на карте репера
+    mission_List mission = mission_List::NO_MISSION; //выбор миссии
+    MissionParam mission_param; //параметры для задания миссии
+    mission_Control missionControl = mission_Control::MODE_IDLE; //команды запуска миссии
     uint checksum;
 
 };

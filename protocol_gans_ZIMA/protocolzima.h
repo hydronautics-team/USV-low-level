@@ -12,7 +12,7 @@
 
 #pragma pack(push,1)
 
-enum Title
+enum TitleZIMA
 {
     PZMAE,
     PZMAF,
@@ -90,7 +90,7 @@ public:
                           QObject *parent = nullptr);
     ZimaData data; // Данные от ГАНС
 
-protected:
+    private:
     void findTitle(qint8 index, qint8 crc_in, uint end, QByteArray title); //поиск заголовка
     void parseBuffer();
     QSerialPort zima;

@@ -8,6 +8,14 @@ AH127Cprotocol::AH127Cprotocol(QString portName, int baudRate, QObject *parent)
     m_port.setPortName(portName);
     m_port.open(QIODevice::ReadWrite);
 
+    if (m_port.isOpen()){
+        qDebug()<<" port was opened";
+    }
+    else {
+        qDebug()<<" error open port AH127Cprotocol"<< m_port.errorString();
+        return;
+    }
+
     char cmd_1[6]; //задание формата посылки и частоты выдачи данных, 2.15 и 2.17
     cmd_1[0] = 0x77;
     cmd_1[1] = 0x05;
@@ -237,7 +245,7 @@ void AH127Cprotocol::parseBuffer() {
         data = msg;
 
         emit updateData(data);
-        PrintMsg(msg);
+//        PrintMsg(msg);
         m_buffer.remove(0, index+57);
     }
     else {

@@ -20,22 +20,22 @@ struct Header_AH {
 struct DataFromAH127C {
     Header_AH header;
 
-    float yaw;
-    float pitch=0;
-    float roll=0;
-    float X_accel=0;
-    float Y_accel=0;
-    float Z_accel=0;
-    float X_rate=0;
-    float Y_rate=0;
-    float Z_rate=0;
-    float X_magn=0;
-    float Y_magn=0;
-    float Z_magn=0;
-    float first_qvat=0;
-    float second_qvat=0;
-    float third_qvat=0;
-    float four_qvat=0;
+    float yaw = 0;
+    float pitch = 0;
+    float roll = 0;
+    float X_accel = 0;
+    float Y_accel = 0;
+    float Z_accel = 0;
+    float X_rate = 0;
+    float Y_rate = 0;
+    float Z_rate = 0;
+    float X_magn = 0;
+    float Y_magn = 0;
+    float Z_magn = 0;
+    float first_qvat = 0;
+    float second_qvat = 0;
+    float third_qvat = 0;
+    float four_qvat = 0;
     float crc;
 };
 

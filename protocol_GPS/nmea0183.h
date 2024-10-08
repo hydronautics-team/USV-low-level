@@ -2,16 +2,21 @@
 #define NMEA0183_H
 
 #include <QObject>
+#include <QString>
 #include <QSerialPort>
 #include <QDebug>
+#include <QString>
 #include <QTimer>
 #include <QTime>
 #include <QDate>
 #include <QFile>
+#include <QList>
 
-#pragma pack(push,1)
+
 
 namespace NMEA {
+
+#pragma pack(push,1)
 
 enum TitleNMEA
 {
@@ -46,17 +51,13 @@ enum TitleNMEA
 
 struct GLL
 {
-    float lat = 0;
-    char NS = 0;
-    float long_ = 0;
-    char EW = 0;
-//    uint16_t time_h = 0;
-//    uint16_t time_m = 0;
-//    uint16_t time_s = 0;
-//    uint16_t time_ms = 0;
+    double lat = 0;
+    QString NS = 0;
+    double long_ = 0;
+    QString EW = 0;
     QTime time;
-    char status = 0;
-    char posMode = 0;
+    QString status = 0;
+    QString posMode = 0;
 };
 
 struct stPSAT
@@ -88,7 +89,7 @@ struct RMS
 struct GGA
 {
     QTime time;           // UTC Время обсервации
-    double latitude;      // Широта
+    double latitude = 0;      // Широта
     QString latHemisphere;// Полушарие (N/S)
     double longitude;     // Долгота
     QString lonHemisphere;// Полушарие (E/W)
@@ -176,15 +177,15 @@ struct GPSData {
 struct GPS
 {
     GLL gll;
-    RMS rms;
+//    RMS rms;
     GGA gga;
-    RMC rmc;
-    VTG vtg;
-    GSA gsa;
-    ZDA zda;
-    stHDT hdt;
-    stROT rot;
-    TXT txt;
+//    RMC rmc;
+//    VTG vtg;
+//    GSA gsa;
+//    ZDA zda;
+//    stHDT hdt;
+//    stROT rot;
+//    TXT txt;
     stPSAT psat;
 };
 
@@ -196,16 +197,15 @@ class NMEA0183 : public QObject
 public:
     explicit NMEA0183(QString portName, int baudRate = 115200, QObject *parent = 0);
     void readData();
-    GPS gps;
+    GPS *gps;
 protected:
     QFile fileGPS;
-    void findTitleNMEA(qint8 index, qint8 crc_in, uint end, QByteArray title); //поиск заголовка
+    void findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray &title); //поиск заголовка
     QSerialPort gps_port;
     QByteArray gps_buffer;
     void parseBuffer();
     void parseGNGGA(QByteArray msg);
-    void parseGPGGA(QByteArray msg);
-    void parseGLGGA(QByteArray msg);
+    void parseGPGGA(QByteArray &msg);
     void parseGNRMC(QByteArray msg);
     void parseGPRMC(QByteArray msg);
     void parseGLRMC(QByteArray msg);
@@ -223,17 +223,17 @@ protected:
     void parseGLZDA(QByteArray msg);
     void parseHDT(QByteArray msg);
     void parseROT(QByteArray msg);
-    void parsePSAT(QByteArray msg);
+    void parsePSAT(QByteArray &msg);
     void parsePRDCU(QByteArray msg);
     void parseGPTXT(QByteArray msg);
-    void parseGPGLL(QByteArray msg);
+    void parseGPGLL(QByteArray &msg);
+
 
     int crc (QByteArray msg);
     int crc_real_method(QByteArray gps_buffer, uint crc_in);
-    bool test_message = true;
+    bool test_message = false;
     QTimer timer;
-signals:
-    void newMessageDetected(GPS gps);
+
 
 };
 

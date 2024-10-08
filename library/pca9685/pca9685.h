@@ -28,8 +28,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <wiringPi.h>
-#include <wiringPiI2C.h>
+#include "wiringPi.h"
+#include "wiringPiI2C.h"
 
 // Setup a pca9685 at the specific i2c address
 extern int pca9685Setup(const int pinBase, const int i2cAddress/* = 0x40*/, float freq/* = 50*/);

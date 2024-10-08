@@ -11,6 +11,7 @@ double X[2000][2];
 
 CS_USV::CS_USV(QObject *parent)
 {
+    qDebug() << "start constract CS_USV";
     QString filePath = "configuration/settings.json";
     parseJsonFile(filePath); //чтение джейсона и создание объектов под все обмены
 
@@ -25,27 +26,32 @@ CS_USV::CS_USV(QObject *parent)
 
     //обмен с ВМА
     vmaProtocol = new VMA_control();
-    vmaProtocol->start();
+    vmaProtocol->moveToThread(&vmaThread);
+    QObject::connect(&vmaThread, &QThread::started, vmaProtocol, &VMA_control::start);
+    vmaThread.start();
 
     //включаем ВМА установкой сигналов на ножки
     wiringPiSetup () ;
     pinMode (27, OUTPUT) ;
-    digitalWrite (27, HIGH) ;
+    digitalWrite (27, LOW) ;
 
     X[91][0]=X[91][1]=0; //нулевые НУ для интегрирования угловой скорости и нахождения угла курса
     X[92][0]=X[92][1]=0; //нулевые НУ для интегрирования угловой скорости и нахождения угла дифферента
     X[609][0]=X[609][1]=0; //нулевые НУ для дифференцирования контура глубины
 
-    connect(echolot, &PA500::sendDistance, this, &CS_USV::handleDepthData);
+    logger = new Logger();
+    connect(echolot, &PA500::sendDistance, logger, &Logger::log_Echo);
 
     connect(&timer, &QTimer::timeout, this, &CS_USV::tick);
 
     timer.start(20);
     timeRegulator.start();
+    qDebug() << "end constract";
 }
 
 void CS_USV::parseJsonFile(QString filePath)
 {
+    qDebug() << "start parseJsonFile";
     QFile file(filePath);
     if (!file.exists()) {
         qDebug() << "No config file : " << filePath;
@@ -58,6 +64,9 @@ void CS_USV::parseJsonFile(QString filePath)
         // Обработка данных от БСО и создание объекта обмена
         QJsonObject bsoObj = confObject.value("BW-AH127C").toObject();
         AH127C = new AH127Cprotocol(bsoObj.value("device").toString());
+        connect_BSO = bsoObj.value("state").toString();
+
+        qDebug() << "end AH127C";
 
         // Обработка данных от платы диагностики и создание объекта обмена
         QJsonObject diagnObj = confObject.value("Diagnostic").toObject();
@@ -66,17 +75,17 @@ void CS_USV::parseJsonFile(QString filePath)
         // Обработка данных от ГАНСА и создание объекта обмена
         QJsonObject gansObj = confObject.value("Hydroacoustics").toObject();
         GANS = new ProtocolZIMA(gansObj.value("device").toString());
+        ssp = new CoordSSP();
 
         // Обработка данных от GPS и создание объекта обмена
         QJsonObject gpsObj = confObject.value("GPS").toObject();
-        GPS = new NMEA::NMEA0183(gpsObj.value("device").toString());
-
+        gpsProt = new NMEA::NMEA0183 (gpsObj.value("device").toString(), 115200);
         // Обработка данных от эхолота и создание объекта обмена
         QJsonObject echObj = confObject.value("Echolot").toObject();
-        echolot = new PA500(echObj.value("device").toString(), echObj.value("speed").toInt()); //9600 по умолчанию
+        echolot = new PA500(echObj.value("device").toString(), 115200);
     }
+    qDebug() << "end parseJsonFile";
 }
-
 
 float CS_USV::saturation(float input, float max, float min)
 {
@@ -118,11 +127,6 @@ void CS_USV::tick()
     writeDataToPult();
 }
 
-void CS_USV::handleDepthData(float d)
-{
-    //записать в файл и передать на пульт
-}
-
 void CS_USV::processDesiredValuesAutomatiz(double inputFromRUD, double &output, double &prev_output, double scaleK, bool flagLimit, double maxValue, double dt)
 {
     double inputScaled = inputFromRUD * scaleK;
@@ -157,8 +161,29 @@ void CS_USV::readDataFromPult()
     if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_MANUAL) qDebug() << "Я в РУЧНОМ!";
     if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_AUTOMATIC) qDebug() << "Я в АВТОМАТИЧЕСКОМ";
 
+    qDebug() << "auvProtocol->rec_data.reper.x_point" << QString::number(auvProtocol->rec_data.reper.x_point, 'f', 6);
+    qDebug() << "auvProtocol->rec_data.reper.y_point" <<  QString::number(auvProtocol->rec_data.reper.y_point, 'f', 6);
+
     if (auvProtocol->rec_data.modeAUV_selection == 1) setModellingFlag(true);
         else setModellingFlag(false);
+
+    if(auvProtocol->rec_data.pMode == power_Mode::MODE_2)
+    {
+        digitalWrite (27, LOW) ;
+    }
+    if(auvProtocol->rec_data.pMode == power_Mode::MODE_3)
+    {
+        digitalWrite (27, HIGH) ;
+    }
+    if (auvProtocol->rec_data.reper.x_point !=0 && flag_reper_on == 0)
+    {
+        flag_reper_on = 1;
+        GPSPoint reperData;
+        reperData.latitude = auvProtocol->rec_data.reper.x_point ;
+        reperData.longitude = auvProtocol->rec_data.reper.y_point;
+        ssp->setReferencePoint(reperData);
+    }
+
 }
 
 void CS_USV::setModellingFlag(bool flag)
@@ -171,35 +196,36 @@ void CS_USV::setModellingFlag(bool flag)
 
 void CS_USV::alternative_yaw_calculation(float dt)
 {
-    X[170][0] = X[70][0] + K[70]; //Mx с учетом коррекции
-    X[171][0] = X[71][0] + K[71]; //My с учетом коррекции
-    X[172][0] = X[72][0] + sin(0.5*X[63][0]/57.3)*K[72]; //Mz с учетом коррекции
+    if (connect_BSO == "connect") {
+        X[170][0] = X[70][0] + K[70]; //Mx с учетом коррекции
+        X[171][0] = X[71][0] + K[71]; //My с учетом коррекции
+        X[172][0] = X[72][0] + sin(0.5*X[63][0]/57.3)*K[72]; //Mz с учетом коррекции
 
-    double teta = X[62][0]*M_PI/180; double gamma = X[63][0]*M_PI/180;
-    X[176][0] = teta;
-    X[177][0] = gamma;
-    A[0][0] = cos(teta); A[0][1] = sin(teta)*sin(gamma); A[0][2] = -sin(teta)*cos(gamma);
-    A[1][0] = 0; A[1][1] = cos(gamma); A[1][2] = sin(gamma);
-    A[2][0] = sin(teta); A[2][1] = -sin(gamma)*cos(teta); A[2][2] = cos(teta)*cos(gamma);
+        double teta = X[62][0]*M_PI/180; double gamma = X[63][0]*M_PI/180;
+        X[176][0] = teta;
+        X[177][0] = gamma;
+        A[0][0] = cos(teta); A[0][1] = sin(teta)*sin(gamma); A[0][2] = -sin(teta)*cos(gamma);
+        A[1][0] = 0; A[1][1] = cos(gamma); A[1][2] = sin(gamma);
+        A[2][0] = sin(teta); A[2][1] = -sin(gamma)*cos(teta); A[2][2] = cos(teta)*cos(gamma);
 
-    X[300][0] = I[0] = A[0][0]*X[170][0] + A[0][1]*X[171][0] + A[0][2]*X[172][0];
-    X[400][0] = I[1] = A[1][0]*X[170][0] + A[1][1]*X[171][0] + A[1][2]*X[172][0];
-    X[500][0] = I[2] = A[2][0]*X[170][0] + A[2][1]*X[171][0] + A[2][2]*X[172][0];
+        X[300][0] = I[0] = A[0][0]*X[170][0] + A[0][1]*X[171][0] + A[0][2]*X[172][0];
+        X[400][0] = I[1] = A[1][0]*X[170][0] + A[1][1]*X[171][0] + A[1][2]*X[172][0];
+        X[500][0] = I[2] = A[2][0]*X[170][0] + A[2][1]*X[171][0] + A[2][2]*X[172][0];
 
-    X[174][0] = I[0];
-    X[175][0] = I[1];
-    X[178][0] = atan2(-I[1],-I[0])*57.3;
+        X[174][0] = I[0];
+        X[175][0] = I[1];
+        X[178][0] = atan2(-I[1],-I[0])*57.3;
 
-    X[79][0] = -1/cos(X[62][0]/57.3)*(-X[69][0]*cos(X[63][0]/57.3)-X[68][0]*sin(X[63][0]/57.3));
+        X[79][0] = -1/cos(X[62][0]/57.3)*(-X[69][0]*cos(X[63][0]/57.3)-X[68][0]*sin(X[63][0]/57.3));
 
-    if (!flagYawInit) {
-       flagYawInit = true;
-       X[91][0] = X[91][1]= X[178][0] + K[178];
-       drewYaw = X[69][0];
-    }
+        if (!flagYawInit) {
+           flagYawInit = true;
+           X[91][0] = X[91][1]= X[178][0] + K[178];
+           drewYaw = X[69][0];
+        }
 
-    integrate(X[79][0],X[91][0],X[91][1],dt); //интегрируем показание Z_rate для нахождения текущего угла курса
-
+        integrate(X[79][0],X[91][0],X[91][1],dt); //интегрируем показание Z_rate для нахождения текущего угла курса
+    } else X[91][0] = 0;
 }
 
 void CS_USV::readDataFromSensors()
@@ -229,17 +255,31 @@ void CS_USV::readDataFromSensors()
     X[76][0] = AH127C->data.four_qvat;
 
     //чтение данных от ГАНС
-    X[41][0] = GANS->data.pzmae.Azimuth;
-    X[42][0] = GANS->data.pzmae.Distance;
-    X[43][0] = GANS->data.pzmae.DataValue;
-    X[44][0] = GANS->data.pzmaf.Temperature;
-    X[45][0] = GANS->data.pzmaf.Depth;
-    X[46][0] = GANS->data.pzmag.Roll;
-    X[47][0] = GANS->data.pzmag.Pitch;
+//    X[41][0] = GANS->data.pzmae.Azimuth;
+//    X[42][0] = GANS->data.pzmae.Distance;
+//    X[43][0] = GANS->data.pzmae.DataValue;
+//    X[44][0] = GANS->data.pzmaf.Temperature;
+//    X[45][0] = GANS->data.pzmaf.Depth;
+//    X[46][0] = GANS->data.pzmag.Roll;
+//    X[47][0] = GANS->data.pzmag.Pitch;
 
-    //чтение данных от Транзаса (вынесла только часть)
-    X[48][0] = GPS->gps.gga.latitude;
-    X[49][0] = GPS->gps.gga.longitude;
+//    //чтение данных от Транзаса (вынесла только часть)
+    X[48][0] = gpsProt->gps->gga.latitude;
+    X[49][0] = gpsProt->gps->gga.longitude;
+//    if ( gpsProt->gps->gga.latitude !=0 && flag_reper_on == 0)
+//    {
+//        flag_reper_on = 1;
+//        GPSPoint reperData;
+//        reperData.latitude     =gpsProt->gps->gga.latitude/100;
+//        reperData.longitude     = gpsProt->gps->gga.longitude/100;
+//        ssp->setReferencePoint(reperData);
+//    }
+    GPSPoint gpsData;
+    gpsData.latitude =gpsProt->gps->gga.latitude/100;
+    gpsData.longitude = gpsProt->gps->gga.longitude/100;
+    ssp->getLocalCoordinates(gpsData, current_point.x_point, current_point.y_point);
+    qDebug() << "current_point.x_point" << current_point.x_point;
+    qDebug() << "current_point.y_point" << current_point.y_point;
 }
 
 void CS_USV::regulators()
@@ -408,7 +448,6 @@ void CS_USV::writeDataToPult()
     auvProtocol->send_data.auvData.ControlDataReal.depth;
     auvProtocol->send_data.auvData.ControlDataReal.lag;
     auvProtocol->send_data.auvData.signalVMA_real;
-    auvProtocol->send_data.ID_mission = auvProtocol->rec_data.ID_mission_AUV;
 
     auvProtocol->send_data.dataAH127C.yaw = X[91][0];
 //    qDebug() << "X[91][0] "<< X[91][0];
@@ -435,17 +474,17 @@ void CS_USV::writeDataToPult()
     auvProtocol->send_data.auvData.signalVMA_real.VMA3 = X[82][0];
     auvProtocol->send_data.auvData.signalVMA_real.VMA4 = X[83][0];
 
-    auvProtocol->send_data.diagnostics.PMW1 = diagnostic ->data.PMW1;
-    auvProtocol->send_data.diagnostics.PMW2 = diagnostic ->data.PMW2;
-    auvProtocol->send_data.diagnostics.PMW3 = diagnostic ->data.PMW3;
-    auvProtocol->send_data.diagnostics.current_1 = diagnostic ->data.current_1;
-    auvProtocol->send_data.diagnostics.current_2 = diagnostic ->data.current_2;
-    auvProtocol->send_data.diagnostics.current_3 = diagnostic ->data.current_3;
-    auvProtocol->send_data.diagnostics.current_4 = diagnostic ->data.current_4;
-    auvProtocol->send_data.diagnostics.voltage_4 = diagnostic ->data.voltage_4;
-    auvProtocol->send_data.diagnostics.voltage_5v = diagnostic ->data.voltage_5v;
-    auvProtocol->send_data.diagnostics.voltage_12v = diagnostic ->data.voltage_12v;
-    auvProtocol->send_data.diagnostics.voltage_bat = diagnostic ->data.voltage_bat;
+//    auvProtocol->send_data.diagnostics.PMW1 = diagnostic ->data.PMW1;
+//    auvProtocol->send_data.diagnostics.PMW2 = diagnostic ->data.PMW2;
+//    auvProtocol->send_data.diagnostics.PMW3 = diagnostic ->data.PMW3;
+//    auvProtocol->send_data.diagnostics.current_1 = diagnostic ->data.current_1;
+//    auvProtocol->send_data.diagnostics.current_2 = diagnostic ->data.current_2;
+//    auvProtocol->send_data.diagnostics.current_3 = diagnostic ->data.current_3;
+//    auvProtocol->send_data.diagnostics.current_4 = diagnostic ->data.current_4;
+//    auvProtocol->send_data.diagnostics.voltage_4 = diagnostic ->data.voltage_4;
+//    auvProtocol->send_data.diagnostics.voltage_5v = diagnostic ->data.voltage_5v;
+//    auvProtocol->send_data.diagnostics.voltage_12v = diagnostic ->data.voltage_12v;
+//    auvProtocol->send_data.diagnostics.voltage_bat = diagnostic ->data.voltage_bat;
 
     auvProtocol->send_data.dataGANS.azimuth = X[41][0];
     auvProtocol->send_data.dataGANS.distance = X[42][0];
@@ -455,25 +494,26 @@ void CS_USV::writeDataToPult()
     auvProtocol->send_data.dataGANS.roll_GANS = X[46][0];
     auvProtocol->send_data.dataGANS.pitch_GANS = X[47][0];
 
-    auvProtocol->send_data.angularGPS.time_UTC = GPS->gps.psat.time;
-    auvProtocol->send_data.angularGPS.yaw = GPS->gps.psat.yaw;
-    auvProtocol->send_data.angularGPS.pitch = GPS->gps.psat.pitch;
-    auvProtocol->send_data.angularGPS.roll = GPS->gps.psat.roll;
-    auvProtocol->send_data.angularGPS.dataType = GPS->gps.psat.dataType;
-    auvProtocol->send_data.coordinateGPS.time = GPS->gps.gga.time;
-    auvProtocol->send_data.coordinateGPS.latitude = GPS->gps.gga.latitude;
-    auvProtocol->send_data.coordinateGPS.latHemisphere = GPS->gps.gga.latHemisphere;
-    auvProtocol->send_data.coordinateGPS.longitude = GPS->gps.gga.longitude;
-    auvProtocol->send_data.coordinateGPS.lonHemisphere = GPS->gps.gga.lonHemisphere;
-    auvProtocol->send_data.coordinateGPS.quality = GPS->gps.gga.quality;
-    auvProtocol->send_data.coordinateGPS.satellitesUsed = GPS->gps.gga.satellitesUsed;
-    auvProtocol->send_data.coordinateGPS.hdop = GPS->gps.gga.hdop;
-    auvProtocol->send_data.coordinateGPS.altitude = GPS->gps.gga.altitude;
-    auvProtocol->send_data.coordinateGPS.altitudeUnit = GPS->gps.gga.altitudeUnit;
-    auvProtocol->send_data.coordinateGPS.geoidHeight = GPS->gps.gga.geoidHeight;
-    auvProtocol->send_data.coordinateGPS.geoidUnit = GPS->gps.gga.geoidUnit;
-    auvProtocol->send_data.coordinateGPS.dgpsAge = GPS->gps.gga.dgpsAge;
-    auvProtocol->send_data.coordinateGPS.dgpsStationId = GPS->gps.gga.dgpsStationId;
+//    auvProtocol->send_data.angularGPS.time_UTC = gps.gps.psat.time;
+//    auvProtocol->send_data.angularGPS.yaw = gps.gps.psat.yaw;
+//    auvProtocol->send_data.angularGPS.pitch = gps.gps.psat.pitch;
+//    auvProtocol->send_data.angularGPS.roll = gps.gps.psat.roll;
+//    auvProtocol->send_data.angularGPS.dataType = gps.gps.psat.dataType;
+//    auvProtocol->send_data.coordinateGPS.time = gps.gps.gga.time;
+//    auvProtocol->send_data.coordinateGPS.latitude = gps.gps.gga.latitude;
+//    auvProtocol->send_data.coordinateGPS.latHemisphere = gps.gps.gga.latHemisphere;
+//    auvProtocol->send_data.coordinateGPS.longitude = gps.gps.gga.longitude;
+//    auvProtocol->send_data.coordinateGPS.lonHemisphere = gps.gps.gga.lonHemisphere;
+//    auvProtocol->send_data.coordinateGPS.quality = gps.gps.gga.quality;
+//    auvProtocol->send_data.coordinateGPS.satellitesUsed = gps.gps.gga.satellitesUsed;
+//    auvProtocol->send_data.coordinateGPS.hdop = gps.gps.gga.hdop;
+//    auvProtocol->send_data.coordinateGPS.altitude = gps.gps.gga.altitude;
+//    auvProtocol->send_data.coordinateGPS.altitudeUnit = gps.gps.gga.altitudeUnit;
+//    auvProtocol->send_data.coordinateGPS.geoidHeight = gps.gps.gga.geoidHeight;
+//    auvProtocol->send_data.coordinateGPS.geoidUnit = gps.gps.gga.geoidUnit;
+//    auvProtocol->send_data.coordinateGPS.dgpsAge = gps.gps.gga.dgpsAge;
+//    auvProtocol->send_data.coordinateGPS.dgpsStationId = gps.gps.gga.dgpsStationId;
+
 }
 
 void CS_USV::aperiodicFilter(double &input, double &output, double &prevOutput, double K, double T, double dt)

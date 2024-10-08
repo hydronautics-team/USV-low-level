@@ -11,7 +11,7 @@ class PC_Protocol: public QObject, public MetaUdpProtocol {
     Q_OBJECT
 public:
 explicit PC_Protocol(const QString & config = "protocols.conf",
-                       const QString & name = "agent", QObject *parent = 0){
+                       const QString & name = "surface_agent", QObject *parent = 0){
     udpProtocol = new UdpProtocol <FromPult, ToPult> (config, name, parent);
     connect(timer,SIGNAL(timeout()),SLOT(sendData()));
     connect(udpProtocol->getReceiveSocket(),SIGNAL(readyRead()),SLOT(receiveData()));

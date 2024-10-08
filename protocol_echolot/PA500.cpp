@@ -1,6 +1,6 @@
 #include "PA500.h"
 
-PA500::PA500(const QString &portName, int baudrate) :
+PA500::PA500(const QString &portName, int baudrate):
     PA500_port_name(portName),
     PA500_baudrate(baudrate)
 {
@@ -9,11 +9,12 @@ PA500::PA500(const QString &portName, int baudrate) :
     ser_PA500->setBaudRate(PA500_baudrate);
     ser_PA500->setStopBits(QSerialPort::OneStop);
     ser_PA500->setDataBits(QSerialPort::Data8);
-    
+//            wrilelogLog = true;
     if (ser_PA500->open(QIODevice::ReadWrite))
     {
         qDebug() << PA500_port_name << " is opened successfully";
         connect(ser_PA500, &QSerialPort::readyRead, this, &PA500::readData);
+        qDebug() << "коннект считан";
     }
     else
     {
@@ -24,7 +25,6 @@ PA500::PA500(const QString &portName, int baudrate) :
 void PA500::readData() // Обработка данных из посылки эхолота
 {
     QByteArray tmp = ser_PA500->readAll();
-    qDebug() << "Got from port:" << tmp;
 
     // Данные приходят в формате "050.000m" (50 м)
     if (tmp.contains('m'))
