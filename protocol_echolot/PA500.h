@@ -5,6 +5,12 @@
 #include <QDebug>
 #include <QObject>
 
+struct EcholotStr
+{
+    float depth = 0;
+    uint16_t counter = 0;
+};
+
 class PA500 : public QObject
 {
     Q_OBJECT
@@ -14,8 +20,10 @@ public:
     ~PA500();
     void readData(); // обработка данных из посылки эхолота
 
+    EcholotStr echo;
+
 signals:
-    void sendDistance(float d); // сигнал для передачи данных
+    void sendDistance(EcholotStr *echo); // сигнал для передачи данных
 
 private:
     QSerialPort *ser_PA500;

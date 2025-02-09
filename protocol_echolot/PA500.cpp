@@ -29,9 +29,10 @@ void PA500::readData() // Обработка данных из посылки э
     // Данные приходят в формате "050.000m" (50 м)
     if (tmp.contains('m'))
     {
-        float dist = tmp.left(tmp.indexOf("m")).toFloat();
-        qDebug() << "Depth data =" << dist;
-        emit sendDistance(dist); // Передаем данные о глубине через сигнал
+        echo.counter +=1;
+        echo.depth = tmp.left(tmp.indexOf("m")).toFloat();
+        qDebug() << "Depth data =" << echo.depth;
+        emit sendDistance(&echo); // Передаем данные о глубине через сигнал
     }
 }
 

@@ -16,6 +16,7 @@
 #include <qmath.h>
 #include <QTime>
 #include <QDebug>
+#include <QProcess>
 
 const QString ConfigFile = "protocols.conf";
 const QString agent = "surface_agent";
@@ -28,6 +29,13 @@ class CS_USV : public QObject
     Q_OBJECT
 public:
     CS_USV(QObject * parent = nullptr);
+    ~CS_USV() {
+    if (process->state() == QProcess::Running) {
+              process->terminate();  // Или process->kill(), если terminate не сработает
+              process->waitForFinished();
+          }
+          delete process;
+    }
     void parseJsonFile(QString filePath);
     void start(int dt){
         timer.start(dt);
@@ -49,7 +57,11 @@ public:
 
 public slots:
     void tick();
-    void handleDepthData(float d);
+    void exchangeUSV();
+    void closeExchangeUSV();
+
+signals:
+    void updateSSP(SSPdata* ssp);
 
 protected:
     void processDesiredValuesAutomatiz(double inputFromRUD, double &output, double &prev_output, double scaleK,
@@ -63,6 +75,8 @@ protected:
     void readDataFromSensors();
 
     void regulators();
+    void calculate_yaw_for_go_to_point(float delta_x, float delta_y);
+    void automated_motion(double dt);
     void resetYawChannel();
     void resetRollChannel();
     void resetPitchChannel();
@@ -86,10 +100,13 @@ protected:
     Logger *logger = nullptr;
     CoordSSP *ssp = nullptr;
     CoordinatePoint current_point;
+    CoordinatePoint goal_point; //координаты цели
+    QProcess *process;
 
     QThread vmaThread;
 
     QTimer timer;
+    QTimer timerReceived; //таймер для отслеживания потери связи с надводником
     QTime timeRegulator;
     QTime timeYaw;
 
@@ -107,12 +124,18 @@ protected:
     qint8 flag_switch_mode_1 = true;
     qint8 flag_switch_mode_2 = false;
     qint8 flag_switch_mode_3 = false;
+    quint8 flag_keep_mode = 0;
     double drewYaw = 0;
     double drewYawAuto = 0;
     bool flagYawInit = false;
     bool flagYawAuto = false;
     double A[3][3];  //матрица перехода
     double I[3];   //Ix, Iy, Iz
+
+    SSPdata sspData;
+
+    double point_for_keeping_x = 0;
+    double point_for_keeping_y = 0;
 };
 
 #endif // CS_USV_H

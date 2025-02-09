@@ -11,6 +11,7 @@
 #include <QDate>
 #include <QFile>
 #include <QList>
+#include <QMetaType>
 
 
 
@@ -58,6 +59,7 @@ struct GLL
     QTime time;
     QString status = 0;
     QString posMode = 0;
+    uint16_t count = 0;
 };
 
 struct stPSAT
@@ -66,7 +68,8 @@ struct stPSAT
     double yaw;        // Курс (рысканье)
     double pitch;      // Килевая качка
     double roll;       // Бортовая качка
-    QString dataType;  // Тип данных (N - курс от GPS, G - гиро курс)
+    char dataType;  // Тип данных (N - курс от GPS, G - гиро курс)
+    uint16_t count = 0;
 };
 
 struct RMS
@@ -90,18 +93,19 @@ struct GGA
 {
     QTime time;           // UTC Время обсервации
     double latitude = 0;      // Широта
-    QString latHemisphere;// Полушарие (N/S)
-    double longitude;     // Долгота
-    QString lonHemisphere;// Полушарие (E/W)
+    char latHemisphere = 'Z';// Полушарие (N/S)
+    double longitude = 0;     // Долгота
+    char lonHemisphere= 'Z';// Полушарие (E/W)
     int quality;          // Индикатор качества обсервации
     int satellitesUsed;   // Количество спутников
     double hdop;          // Величина горизонтального геометрического фактора (HDOP)
     double altitude;      // Высота антенны над уровнем моря (геоидом)
-    QString altitudeUnit; // Единица измерения высоты (м)
+    char altitudeUnit= 'Z'; // Единица измерения высоты (м)
     double geoidHeight;   // Превышение геоида над эллипсоидом WGS84
-    QString geoidUnit;    // Единица измерения превышения геоида (м)
+    char geoidUnit= 'Z';    // Единица измерения превышения геоида (м)
     double dgpsAge = 0;       // Возраст дифференциальной поправки
     int dgpsStationId = 0;    // Идентификатор ККС
+    uint16_t count = 0;
 };
 
 struct RMC {
@@ -191,6 +195,9 @@ struct GPS
 
 #pragma pack(pop)
 
+//Q_DECLARE_METATYPE(GPS*)
+//Q_DECLA
+
 class NMEA0183 : public QObject
 {
     Q_OBJECT
@@ -233,6 +240,8 @@ protected:
     int crc_real_method(QByteArray gps_buffer, uint crc_in);
     bool test_message = false;
     QTimer timer;
+signals:
+    void updateGPS(GPS* gpsData);
 
 
 };

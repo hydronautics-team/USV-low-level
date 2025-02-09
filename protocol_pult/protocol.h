@@ -216,6 +216,8 @@ struct ToPult
     mission_List missionList = mission_List::NO_MISSION; //выбор миссии
     mission_Status missionStatus = mission_Status::MODE_IDLE; //состояние выполнения миссии
     quint8 first_point_complete; //флаг прохождения точки для движения галсами
+    float altitude;
+    quint16 count_receive_gans;
     uint checksum;
 };
 

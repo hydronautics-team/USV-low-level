@@ -31,6 +31,8 @@ struct stPZMAE // Ответ удаленного ответчика.
     double DataValue   = 0; // Значение запрошенного параметра
     double SNR         = 0; // Соотношение сигнал-шум, дБ
     double DPL         = 0; // Допплеровское смещение, Гц
+    uint16_t count_answer   = 0; // Счетчик ответов
+
 };
 
 struct stPZMAF ///< Cостояние системы
@@ -39,17 +41,20 @@ struct stPZMAF ///< Cостояние системы
     double Depth            = 0; // Глубина базовой станции от поверхности, м
     double isAHRSEnabled    = 0; // Состояние AHRS
     double TRX_State        = 0; //	Состояние приемопередатчика
+    uint16_t count          = 0; // Счетчик ответов
 };
 
 struct stPZMAG ///< Показания встроенного инклинометра*
 {
     double Roll  = 0; // Крен, °. 0 - вертикальное положение, 0..+90 - поворот на правый борт, 0..-90 - поворот на левый борт
     double Pitch = 0; // Дифферент, °. 0 - вертикальное положение, 0..+90 - крен на нос, 0..-90 - крен на корму
+    uint16_t count          = 0; // Счетчик ответов
 };
 
 struct stPZMA0 ///< Сообщение IC_D2H_ACK - реакция устройства на поступивший от управляющей системы запрос.
 {
     int Error_code = 0; ///< Код ошибки
+    uint16_t count_request  = 0; // Счетчик запросов
         // ‘0’	NO_ERROR	Запрос принят
         // ‘1’	INVALID_SYNTAX	Ошибка синтаксиса
         // ‘2’	UNSUPPORTED	Команда не поддерживается
@@ -76,7 +81,7 @@ struct ZimaData  ///< Данные, которые поступают от де�
     // PZMAB pzmab; // Запрос базовой станции (ответчик).
     // PZMAD pzmad; // Таймаут удаленного ответчика.
     // PZMAI pzmai; // Информация об устройстве. PZMA!
-
+    uint16_t count_request  = 0; // Счетчик запросов
 };
 
 #pragma pack(pop)
@@ -108,6 +113,8 @@ public:
 
 private slots:
     void sendSoundSlot();
+signals:
+    void updateZima(ZimaData* zima);
 };
 
 #endif // PROTOCOLZIMA_H

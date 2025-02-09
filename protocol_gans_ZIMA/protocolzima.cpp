@@ -28,7 +28,7 @@ ProtocolZIMA::ProtocolZIMA(QString portName, int baudRate,
     connect(&zima, &QSerialPort::readyRead, this, [this]()
     {
         zima_buffer.append(zima.readAll());
-        if (test_messege) qDebug() << "zima_buffer " << zima_buffer;
+//        if (test_messege) qDebug() << "zima_buffer " << zima_buffer;
         int size = zima_buffer.size();
         if (size !=0)
         {
@@ -37,11 +37,12 @@ ProtocolZIMA::ProtocolZIMA(QString portName, int baudRate,
             {
                 parseBuffer();
             }
+
         }
     });
     timer_send = new QTimer(this);
     connect(timer_send, &QTimer::timeout, this, &ProtocolZIMA::sendSoundSlot);
-    timer_send->start(1000);
+    timer_send->start(13000);
 
 }
 
@@ -229,6 +230,10 @@ void ProtocolZIMA::parsePZMAE(QByteArray msg)
     data.pzmae.DPL       = atof(msg.mid(0, index));
     if (test_messege) qDebug() << "pzmae.DPL: "<< data.pzmae.DPL;
     msg.remove(0, index+1);
+    data.pzmae.count_answer += 1;
+    emit updateZima(&data);
+    timer_send->start(13000);
+    sendSoundSlot();
 }
 
 void ProtocolZIMA::parsePZMAF(QByteArray msg)
@@ -252,6 +257,8 @@ void ProtocolZIMA::parsePZMAF(QByteArray msg)
     data.pzmaf.TRX_State = atof(msg.mid(0, index));
     if (test_messege) qDebug() << "pzmaf.TRX_State: "<< data.pzmaf.TRX_State;
     msg.remove(0, index+1);
+    data.pzmaf.count += 1;
+    emit updateZima(&data);
 }
 
 void ProtocolZIMA::parsePZMAG(QByteArray msg)
@@ -267,16 +274,20 @@ void ProtocolZIMA::parsePZMAG(QByteArray msg)
     data.pzmag.Pitch = atof(msg.mid(0, index));
     if (test_messege) qDebug() << "pzmag.Pitch: "<< data.pzmag.Pitch;
     msg.remove(0, index+1);
+    data.pzmag.count += 1;
+    emit updateZima(&data);
 }
 
 void ProtocolZIMA::parsePZMA0(QByteArray msg)
 {
     if (test_messege) qDebug() << msg;
+    data.pzma0.count_request += 1;
     int index =msg.indexOf(44);//ищем первую запятую, перед ней идет не интересный заголовок
     msg.remove(0, index+1); // удаляем заголовок
     index =msg.indexOf(44);//ищем запятую
     data.pzma0.Error_code = atoi(msg.mid(0, index));
     if (test_messege) qDebug() << "pzma0.Error_code: "<< data.pzma0.Error_code;
+//    if (data.pzma0.Error_code == 8) data.count_request -= 1;
     msg.remove(0, index+1);
 }
 
@@ -291,6 +302,7 @@ void ProtocolZIMA::sendSoundSlot()
         char *PZMAC = bufArray.data();
         zima.write(PZMAC, size);
         zima.waitForBytesWritten();
+        data.count_request += 1;
     }
     else
     {

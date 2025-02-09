@@ -20,7 +20,7 @@ CS_USV::CS_USV(QObject *parent)
     //передача X
     x_protocol* xProtocol = new x_protocol(ConfigFile, XI, X);
 
-    //обмен с пультом
+    //обмен с пультом управления
     auvProtocol = new ControlSystem::PC_Protocol(ConfigFile,"surface_agent");
     auvProtocol->startExchange();
 
@@ -33,25 +33,43 @@ CS_USV::CS_USV(QObject *parent)
     //включаем ВМА установкой сигналов на ножки
     wiringPiSetup () ;
     pinMode (27, OUTPUT) ;
-    digitalWrite (27, LOW) ;
+    digitalWrite (27, HIGH) ;
 
     X[91][0]=X[91][1]=0; //нулевые НУ для интегрирования угловой скорости и нахождения угла курса
     X[92][0]=X[92][1]=0; //нулевые НУ для интегрирования угловой скорости и нахождения угла дифферента
     X[609][0]=X[609][1]=0; //нулевые НУ для дифференцирования контура глубины
 
+    // захват видеопотока
+    QStringList arguments;
+           arguments << "v4l2src" << "device=/dev/video0"
+                     << "!image/jpeg,width=640,height=480,framerate=30/1"
+                     << "!jpegparse"
+                     << "!rtpjpegpay"
+                     << "!udpsink" << "host=192.168.3.4" << "port=89000";
+
+           process = new QProcess();
+           process->setProgram("gst-launch-1.0");
+           process->setArguments(arguments);
+           process->start();
+
     logger = new Logger();
     connect(echolot, &PA500::sendDistance, logger, &Logger::log_Echo);
-
     connect(&timer, &QTimer::timeout, this, &CS_USV::tick);
+    connect(gpsProt,&NMEA::NMEA0183::updateGPS, logger, &Logger::log_GPS);
+    connect(GANS,&ProtocolZIMA::updateZima, logger, &Logger::log_Zima);
+    connect(this, &CS_USV::updateSSP, logger, &Logger::log_SSP);
+
+    //отключение связи с пультом управления по таймеру
+    connect(auvProtocol, &ControlSystem::PC_Protocol::dataReceived, this, &CS_USV::exchangeUSV);
+    connect(&timerReceived, &QTimer::timeout, this, &CS_USV::closeExchangeUSV);
+    timerReceived.start(2000);
 
     timer.start(20);
     timeRegulator.start();
-    qDebug() << "end constract";
 }
 
 void CS_USV::parseJsonFile(QString filePath)
 {
-    qDebug() << "start parseJsonFile";
     QFile file(filePath);
     if (!file.exists()) {
         qDebug() << "No config file : " << filePath;
@@ -76,13 +94,15 @@ void CS_USV::parseJsonFile(QString filePath)
         QJsonObject gansObj = confObject.value("Hydroacoustics").toObject();
         GANS = new ProtocolZIMA(gansObj.value("device").toString());
         ssp = new CoordSSP();
+        connect(GANS, &ProtocolZIMA::updateZima, logger, &Logger::log_Zima);
 
         // Обработка данных от GPS и создание объекта обмена
         QJsonObject gpsObj = confObject.value("GPS").toObject();
         gpsProt = new NMEA::NMEA0183 (gpsObj.value("device").toString(), 115200);
+
         // Обработка данных от эхолота и создание объекта обмена
         QJsonObject echObj = confObject.value("Echolot").toObject();
-        echolot = new PA500(echObj.value("device").toString(), 115200);
+        echolot = new PA500(echObj.value("device").toString(), 9600);
     }
     qDebug() << "end parseJsonFile";
 }
@@ -125,6 +145,26 @@ void CS_USV::tick()
     BFS_DRK(X[101][0], X[102][0], X[103][0] , X[104][0], X[105][0], X[106][0]);
     writeDataToVMA();
     writeDataToPult();
+    X[701][0] = goal_point.x_point;
+    X[702][0] = goal_point.y_point;
+
+    X[703][0] = current_point.x_point;
+    X[704][0] = current_point.y_point;
+}
+
+void CS_USV::exchangeUSV()
+{
+    timerReceived.start(2000);
+    if (!timer.isActive())
+    {
+        timer.start(10);
+    }
+}
+
+void CS_USV::closeExchangeUSV()
+{
+    timer.stop();
+    resetValues();
 }
 
 void CS_USV::processDesiredValuesAutomatiz(double inputFromRUD, double &output, double &prev_output, double scaleK, bool flagLimit, double maxValue, double dt)
@@ -161,8 +201,8 @@ void CS_USV::readDataFromPult()
     if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_MANUAL) qDebug() << "Я в РУЧНОМ!";
     if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_AUTOMATIC) qDebug() << "Я в АВТОМАТИЧЕСКОМ";
 
-    qDebug() << "auvProtocol->rec_data.reper.x_point" << QString::number(auvProtocol->rec_data.reper.x_point, 'f', 6);
-    qDebug() << "auvProtocol->rec_data.reper.y_point" <<  QString::number(auvProtocol->rec_data.reper.y_point, 'f', 6);
+//    qDebug() << "auvProtocol->rec_data.reper.x_point" << QString::number(auvProtocol->rec_data.reper.x_point, 'f', 6);
+//    qDebug() << "auvProtocol->rec_data.reper.y_point" <<  QString::number(auvProtocol->rec_data.reper.y_point, 'f', 6);
 
     if (auvProtocol->rec_data.modeAUV_selection == 1) setModellingFlag(true);
         else setModellingFlag(false);
@@ -175,6 +215,7 @@ void CS_USV::readDataFromPult()
     {
         digitalWrite (27, HIGH) ;
     }
+
     if (auvProtocol->rec_data.reper.x_point !=0 && flag_reper_on == 0)
     {
         flag_reper_on = 1;
@@ -201,7 +242,8 @@ void CS_USV::alternative_yaw_calculation(float dt)
         X[171][0] = X[71][0] + K[71]; //My с учетом коррекции
         X[172][0] = X[72][0] + sin(0.5*X[63][0]/57.3)*K[72]; //Mz с учетом коррекции
 
-        double teta = X[62][0]*M_PI/180; double gamma = X[63][0]*M_PI/180;
+        double teta = X[62][0]*M_PI/180;
+        double gamma = X[63][0]*M_PI/180;
         X[176][0] = teta;
         X[177][0] = gamma;
         A[0][0] = cos(teta); A[0][1] = sin(teta)*sin(gamma); A[0][2] = -sin(teta)*cos(gamma);
@@ -220,12 +262,14 @@ void CS_USV::alternative_yaw_calculation(float dt)
 
         if (!flagYawInit) {
            flagYawInit = true;
-           X[91][0] = X[91][1]= X[178][0] + K[178];
+           X[91][0] = X[91][1]= X[178][0] + K[178] + K[179]; //K[179] - магнитное склонение
            drewYaw = X[69][0];
         }
-
         integrate(X[79][0],X[91][0],X[91][1],dt); //интегрируем показание Z_rate для нахождения текущего угла курса
+
     } else X[91][0] = 0;
+
+//    X[91][0] = 360+60 - gpsProt->gps->psat.yaw;
 }
 
 void CS_USV::readDataFromSensors()
@@ -243,7 +287,7 @@ void CS_USV::readDataFromSensors()
 
     X[67][0] = AH127C->data.X_rate;
     X[68][0] = AH127C->data.Y_rate;
-    X[69][0] = AH127C->data.Z_rate+K[69]-drewYaw;
+    X[69][0] = AH127C->data.Z_rate - drewYaw;
 
     X[70][0] = AH127C->data.X_magn;
     X[71][0] = AH127C->data.Y_magn;
@@ -255,28 +299,32 @@ void CS_USV::readDataFromSensors()
     X[76][0] = AH127C->data.four_qvat;
 
     //чтение данных от ГАНС
-//    X[41][0] = GANS->data.pzmae.Azimuth;
-//    X[42][0] = GANS->data.pzmae.Distance;
-//    X[43][0] = GANS->data.pzmae.DataValue;
-//    X[44][0] = GANS->data.pzmaf.Temperature;
-//    X[45][0] = GANS->data.pzmaf.Depth;
-//    X[46][0] = GANS->data.pzmag.Roll;
-//    X[47][0] = GANS->data.pzmag.Pitch;
+    X[41][0] = GANS->data.pzmae.Azimuth;
+    X[42][0] = GANS->data.pzmae.Distance;
+    X[43][0] = GANS->data.pzmae.DataValue;
+    X[44][0] = GANS->data.pzmaf.Temperature;
+    X[45][0] = GANS->data.pzmaf.Depth;
+    X[46][0] = GANS->data.pzmag.Roll;
+    X[47][0] = GANS->data.pzmag.Pitch;
 
-//    //чтение данных от Транзаса (вынесла только часть)
+//  чтение данных от Транзаса (вынесена только часть)
     X[48][0] = gpsProt->gps->gga.latitude;
     X[49][0] = gpsProt->gps->gga.longitude;
+    X[191][0] = gpsProt->gps->psat.yaw;
+
 //    if ( gpsProt->gps->gga.latitude !=0 && flag_reper_on == 0)
 //    {
+//        qDebug() << "установка репера";
 //        flag_reper_on = 1;
 //        GPSPoint reperData;
-//        reperData.latitude     =gpsProt->gps->gga.latitude/100;
-//        reperData.longitude     = gpsProt->gps->gga.longitude/100;
+//        reperData.latitude     =gpsProt->gps->gga.latitude;
+//        reperData.longitude     = gpsProt->gps->gga.longitude;
 //        ssp->setReferencePoint(reperData);
 //    }
+
     GPSPoint gpsData;
-    gpsData.latitude =gpsProt->gps->gga.latitude/100;
-    gpsData.longitude = gpsProt->gps->gga.longitude/100;
+    gpsData.latitude =gpsProt->gps->gga.latitude;
+    gpsData.longitude = gpsProt->gps->gga.longitude;
     ssp->getLocalCoordinates(gpsData, current_point.x_point, current_point.y_point);
     qDebug() << "current_point.x_point" << current_point.x_point;
     qDebug() << "current_point.y_point" << current_point.y_point;
@@ -288,7 +336,7 @@ void CS_USV::regulators()
     timeRegulator.start();
     alternative_yaw_calculation(dt);
 
-    if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_MANUAL) { //САУ тогда разомкнута
+    if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_MANUAL) { //САУ разомкнута
         if (flag_switch_mode_1 == false) {
             X[5][0] = X[5][1] = 0;
             flag_switch_mode_1 = true;
@@ -312,9 +360,176 @@ void CS_USV::regulators()
         X[105][0] = K[105]*X[55][0]; //Uy
         X[106][0] = K[106]*X[56][0]; //Uz
 
-        controlYaw(dt); //контур курса
+        if (auvProtocol->rec_data.controlContoursFlags.yaw > 0) { //замкнут курс
+            if (flag_switch_mode_2 == false) {
+                X[5][1]=X[91][0];
+                X[5][0] = 0;
+                flag_switch_mode_2 = true;
+                flag_switch_mode_1 = false;
+                flag_switch_mode_3 = false;
+            }
+            contour_closure_yaw = 1;
+            processDesiredValuesAutomatiz(X[51][0],X[5][0],X[5][1],K[2]); //пересчет рукоятки в автоматизированном режиме
+            controlYaw(dt); //контур курса
+        } else {
+            X[117][0] = K[101]*X[51][0]; //Upsi
+            resetYawChannel();
+            X[118][0] = saturation(X[117][0],K[116],-K[116]);
+            X[101][0] = X[118][0]*K[100];
+        }
         controlRoll(dt); //контур крена
 //      controlPitch(dt); //контур дифферента
+    } else if (auvProtocol->rec_data.cSMode == e_CSMode::MODE_AUTOMATIC) { //САУ в автоматизированном режиме
+        if  (auvProtocol->rec_data.missionControl == mission_Control::MODE_COMPLETE) {
+            X[101][0] = X[102][0] = X[103][0] = X[104][0] = X[105][0] = X[106][0] = 0;
+            auvProtocol->send_data.missionStatus = mission_Status::MODE_PERFOMED;
+        } else {
+            automated_motion(dt);
+        }
+    }
+}
+
+void CS_USV::calculate_yaw_for_go_to_point(float delta_x, float delta_y) {
+    // пересчет в СК точки-цели
+    if (delta_x < 0) {  // левая полуплоскость относительно целевой точки
+        if (delta_y <= 0) {
+            X[5][0] = atan(abs(delta_y/delta_x))*(180/M_PI); // 3 четверть
+            qDebug() << "X[5][0] =  atan(abs(delta_y/delta_x))*(180/M_PI)!!!!!!!!!!!!";
+        }
+        if ((delta_y > 0)) {
+            X[5][0] = - atan(abs(delta_y/delta_x))*(180/M_PI); // 2 четверть
+            qDebug() << "X[5][0] = - atan(abs(delta_y/delta_x))*(180/M_PI)!!!!!!!!!!!!";
+        }
+    }
+    if (delta_x >= 0) {  // правая полуплоскость относительно целевой точки
+        if (delta_y > 0) {
+            X[5][0] = -180 + atan(abs(delta_y/delta_x))*(180/M_PI); // 1 четверть
+            qDebug() << "X[5][0] = -180 + atan(abs(delta_y/delta_x))*(180/M_PI)!!!!!!!!!!!!";
+        }
+        if (delta_y <= 0) {
+            X[5][0] = 180 - atan(abs(delta_y/delta_x))*(180/M_PI); // 4 четверть
+            qDebug() << "180 - atan(abs(delta_y/delta_x))*(180/M_PI)!!!!!!!!!!!!";
+        }
+    }
+}
+
+void CS_USV::automated_motion(double dt)
+{
+//МИССИЯ ВЫХОДА В ТОЧКУ
+    if ((auvProtocol->rec_data.mission == mission_List::MOVE_TO_POINT) && (auvProtocol->rec_data.missionControl == mission_Control::MODE_START)) {
+        qDebug() << "выход в точку";
+        auvProtocol->send_data.missionList = mission_List::MOVE_TO_POINT;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_RUNNING;
+
+        GPSPoint gpsData; //перевод координат целевой точки относительно репера
+        gpsData.latitude = auvProtocol->rec_data.mission_param.point_mission.x_point;
+        gpsData.longitude = auvProtocol->rec_data.mission_param.point_mission.y_point;
+        ssp->getLocalCoordinates(gpsData, goal_point.x_point, goal_point.y_point);
+
+        qDebug() << "goal.x" << goal_point.x_point;
+        qDebug() << "goal.y" << goal_point.y_point;
+
+        X[912][0] = goal_point.x_point;
+        X[913][0] = goal_point.y_point;
+
+        X[914][0] = current_point.x_point;
+        X[915][0] = current_point.y_point;
+
+        float x_v_SK_sv_x_y_goal = current_point.x_point - goal_point.x_point; //координаты аппаратов, в случае СК с началом координат в точке-цели
+        float y_v_SK_sv_x_y_goal = current_point.y_point - goal_point.y_point;
+
+        qDebug() << "x_v_SK_sv_x_y_goal "  << x_v_SK_sv_x_y_goal;
+        qDebug() << "y_v_SK_sv_x_y_goal "  << y_v_SK_sv_x_y_goal;
+
+        qDebug() << "Расстояние между целью и аппаратом" << sqrt(pow(x_v_SK_sv_x_y_goal, 2) + pow(y_v_SK_sv_x_y_goal, 2));
+        // проверка расстояния до целевой точки, если < утроенного радиуса, то размыкаю контура
+
+        if (sqrt(pow(x_v_SK_sv_x_y_goal, 2) + pow(y_v_SK_sv_x_y_goal, 2)) < 3 * (auvProtocol->rec_data.mission_param.radius)) {
+            X[101][0] = X[102][0] = X[103][0] = X[104][0] = X[105][0] = X[106][0] = 0;
+            contour_closure_yaw = 0;
+            auvProtocol->send_data.missionStatus = mission_Status::MODE_PERFOMED;
+        } else {
+            calculate_yaw_for_go_to_point(x_v_SK_sv_x_y_goal, y_v_SK_sv_x_y_goal);
+            X[104][0] = K[107];
+            qDebug() << "X[5][0]" << X[5][0];
+
+            if (flag_switch_mode_3 == false) {
+                X[59][0] = X[58][0]= X[91][0];
+                flag_switch_mode_3 = true;
+                flag_switch_mode_1 = false;
+                flag_switch_mode_2 = false;
+            }
+            controlYaw(dt); //контур курса
+        }
+
+ //МИССИЯ УДЕРЖАНИЯ ПОЛОЖЕНИЯ
+    } else if (auvProtocol->rec_data.mission == mission_List::KEEP_POS && auvProtocol->rec_data.missionControl == mission_Control::MODE_START) {
+        auvProtocol->send_data.missionList = mission_List::KEEP_POS;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_RUNNING;
+        if (flag_keep_mode == 0) {
+            double point_for_keeping_x = current_point.x_point;
+            double point_for_keeping_y = current_point.y_point;
+            X[5][0] = X[91][0];
+            flag_keep_mode = 1;
+        }
+        controlYaw(dt); // стабилизация курса
+        double dx = current_point.x_point - point_for_keeping_x;
+        double dy = current_point.y_point - point_for_keeping_y;
+
+        if (sqrt(dx * dx + dy * dy) > 3) {
+            X[104][0] = 0;
+            X[104][0] = K[107]/5 * dx;
+//           X[105][0] = K_hold * dy;
+        } else {
+            X[104][0] = 0;
+        }
+
+//МИССИЯ ДВИЖЕНИЯ ПО ОКРУЖНОСТИ
+    } else if ((auvProtocol->rec_data.mission == mission_List::MOVE_TO_POINT) && (auvProtocol->rec_data.missionControl == mission_Control::MODE_START)) {
+        auvProtocol->send_data.missionList = mission_List::MOVE_CIRCLE;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_RUNNING;
+        QVector<QPointF> circlePoints;
+        int additionalPoints = static_cast<int>(auvProtocol->rec_data.mission_param.radius / 5) * 4; // Увеличение точек пропорционально радиусу
+        int n = 8 + additionalPoints;  // Общее количество точек
+        for (int i = 0; i < n; ++i) {
+            float theta = 2 * M_PI * i / n; // угол в радианах
+            float x = auvProtocol->rec_data.mission_param.point_mission.x_point + auvProtocol->rec_data.mission_param.radius * cos(theta);
+            float y = auvProtocol->rec_data.mission_param.point_mission.y_point + auvProtocol->rec_data.mission_param.radius * sin(theta);
+            circlePoints.append(QPointF(x, y));
+        }
+        for (const auto& point_circle : circlePoints) {
+            float x_v_SK_sv_x_y_goal = current_point.x_point - point_circle.x(); //координаты аппарата, в случае СК с началом координат в точке-цели
+            float y_v_SK_sv_x_y_goal = current_point.y_point - point_circle.y();
+
+            // проверка расстояния до целевой точки, если < радиуса, то перехожу к следующей точке
+
+            while (sqrt(pow(x_v_SK_sv_x_y_goal, 2) + pow(y_v_SK_sv_x_y_goal, 2)) > auvProtocol->rec_data.mission_param.radius)  {
+                calculate_yaw_for_go_to_point(x_v_SK_sv_x_y_goal, y_v_SK_sv_x_y_goal);
+                X[104][0] = K[107];
+                // X[105][0] = K[105]*X[55][0]; //Uy
+
+                if (flag_switch_mode_3 == false) {
+                    X[59][0] = X[58][0]= X[91][0];
+                    flag_switch_mode_3 = true;
+                    flag_switch_mode_1 = false;
+                    flag_switch_mode_2 = false;
+                    qDebug() << contour_closure_yaw <<"автоматический режим";
+                }
+                controlYaw(dt); //контур курса
+            }
+        }
+        X[101][0] = X[102][0] = X[103][0] = X[104][0] = X[105][0] = X[106][0] = 0;
+        contour_closure_yaw = 0;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_PERFOMED;
+
+    } else if ((auvProtocol->rec_data.mission == mission_List::MOVE_TACK) && (auvProtocol->rec_data.missionControl == mission_Control::MODE_START)) {
+        auvProtocol->send_data.missionList = mission_List::MOVE_TACK;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_RUNNING;
+        // считываем первую точку, выходим в нее, как только вышли, присваиваем вторую точку первой и так дальше идти
+    } else {
+        X[101][0] = X[102][0] = X[103][0] = X[104][0] = X[105][0] = X[106][0] = 0;
+        auvProtocol->send_data.missionList = mission_List::NO_MISSION;
+        auvProtocol->send_data.missionStatus = mission_Status::MODE_IDLE;
     }
 }
 
@@ -338,39 +553,26 @@ void CS_USV::resetPitchChannel()
 
 void CS_USV::controlYaw(double dt)
 {
-    if (auvProtocol->rec_data.controlContoursFlags.yaw > 0) { //замкнут курс
-        if (flag_switch_mode_2 == false) {
-            X[5][1]=X[91][0];
-            X[5][0] = 0;
-            flag_switch_mode_2 = true;
-            flag_switch_mode_1 = false;
-            flag_switch_mode_3 = false;
-        }
-        contour_closure_yaw = 1;
+    contour_closure_yaw = 1;
+    X[111][0] = yawErrorCalculation(X[5][0],X[91][0]); //учет предела работы датчика, пересчет кратчайшего пути
+    X[111][0] = X[5][0] - X[91][0];
+    X[112][0] = X[111][0] * K[111];
+    X[113][0] = X[112][0] * K[112];
+    X[114][0] = X[114][1] + 0.5*(X[113][0] + X[113][1])*dt; //выходное значение интегратора без полок
 
-        processDesiredValuesAutomatiz(X[51][0],X[5][0],X[5][1],K[2]); //пересчет рукоятки в автоматизированном режиме
-        X[111][0] = yawErrorCalculation(X[5][0],X[91][0]); //учет предела работы датчика, пересчет кратчайшего пути
-        X[112][0] = X[111][0] * K[111];
-        X[113][0] = X[112][0] * K[112];
-        X[114][0] = X[114][1] + 0.5*(X[113][0] + X[113][1])*dt; //выходное значение интегратора без полок
-
-        if (K[113] != 0){//значит заданы полки
-            X[114][0] = saturation(X[114][0],K[113],K[114]); //выходное значение интегратора с полками
-        }
-        X[114][1] = X[114][0];
-        X[113][1] = X[113][0];
-
-        X[116][0] = X[114][0] + X[112][0];
-        aperiodicFilter(X[79][0],X[401][0],X[401][1],K[402],K[403],dt);
-        X[121][0] = X[401][0]*K[118];
-
-        X[119][0] = X[51][0]*K[119];
-        X[117][0] = X[116][0] - X[121][0] + X[119][0];
-
-    } else {
-        X[117][0] = K[101]*X[51][0]; //Upsi
-        resetYawChannel();
+    if (K[113] != 0){//значит заданы полки
+        X[114][0] = saturation(X[114][0],K[113],K[114]); //выходное значение интегратора с полками
     }
+    X[114][1] = X[114][0];
+    X[113][1] = X[113][0];
+
+    X[116][0] = X[114][0] + X[112][0];
+    aperiodicFilter(X[79][0],X[401][0],X[401][1],K[402],K[403],dt);
+    X[121][0] = X[401][0]*K[118];
+
+    X[119][0] = X[51][0]*K[119];
+    X[117][0] = X[116][0] - X[121][0] + X[119][0];
+
     X[118][0] = saturation(X[117][0],K[116],-K[116]);
     X[101][0] = X[118][0]*K[100];
 }
@@ -450,7 +652,7 @@ void CS_USV::writeDataToPult()
     auvProtocol->send_data.auvData.signalVMA_real;
 
     auvProtocol->send_data.dataAH127C.yaw = X[91][0];
-//    qDebug() << "X[91][0] "<< X[91][0];
+    qDebug() << "X[91][0] "<< X[91][0];
 //    qDebug() << "X[62][0] "<< X[62][0];
 //    qDebug() << "X[63][0] "<< X[63][0];
     auvProtocol->send_data.dataAH127C.pitch = X[62][0];
@@ -494,26 +696,68 @@ void CS_USV::writeDataToPult()
     auvProtocol->send_data.dataGANS.roll_GANS = X[46][0];
     auvProtocol->send_data.dataGANS.pitch_GANS = X[47][0];
 
-//    auvProtocol->send_data.angularGPS.time_UTC = gps.gps.psat.time;
-//    auvProtocol->send_data.angularGPS.yaw = gps.gps.psat.yaw;
-//    auvProtocol->send_data.angularGPS.pitch = gps.gps.psat.pitch;
-//    auvProtocol->send_data.angularGPS.roll = gps.gps.psat.roll;
-//    auvProtocol->send_data.angularGPS.dataType = gps.gps.psat.dataType;
-//    auvProtocol->send_data.coordinateGPS.time = gps.gps.gga.time;
-//    auvProtocol->send_data.coordinateGPS.latitude = gps.gps.gga.latitude;
-//    auvProtocol->send_data.coordinateGPS.latHemisphere = gps.gps.gga.latHemisphere;
-//    auvProtocol->send_data.coordinateGPS.longitude = gps.gps.gga.longitude;
-//    auvProtocol->send_data.coordinateGPS.lonHemisphere = gps.gps.gga.lonHemisphere;
-//    auvProtocol->send_data.coordinateGPS.quality = gps.gps.gga.quality;
-//    auvProtocol->send_data.coordinateGPS.satellitesUsed = gps.gps.gga.satellitesUsed;
-//    auvProtocol->send_data.coordinateGPS.hdop = gps.gps.gga.hdop;
-//    auvProtocol->send_data.coordinateGPS.altitude = gps.gps.gga.altitude;
-//    auvProtocol->send_data.coordinateGPS.altitudeUnit = gps.gps.gga.altitudeUnit;
-//    auvProtocol->send_data.coordinateGPS.geoidHeight = gps.gps.gga.geoidHeight;
-//    auvProtocol->send_data.coordinateGPS.geoidUnit = gps.gps.gga.geoidUnit;
-//    auvProtocol->send_data.coordinateGPS.dgpsAge = gps.gps.gga.dgpsAge;
-//    auvProtocol->send_data.coordinateGPS.dgpsStationId = gps.gps.gga.dgpsStationId;
+    auvProtocol->send_data.angularGPS.time_UTC = gpsProt->gps->psat.time;
+    auvProtocol->send_data.angularGPS.yaw = gpsProt->gps->psat.yaw;
+    auvProtocol->send_data.angularGPS.pitch = gpsProt->gps->psat.pitch;
+    auvProtocol->send_data.angularGPS.roll = gpsProt->gps->psat.roll;
+    auvProtocol->send_data.angularGPS.dataType = gpsProt->gps->psat.dataType;
+    auvProtocol->send_data.coordinateGPS.time = gpsProt->gps->gga.time;
+    auvProtocol->send_data.coordinateGPS.latitude = gpsProt->gps->gga.latitude;
+    auvProtocol->send_data.coordinateGPS.latHemisphere = gpsProt->gps->gga.latHemisphere;
+    auvProtocol->send_data.coordinateGPS.longitude = gpsProt->gps->gga.longitude;
+    auvProtocol->send_data.coordinateGPS.lonHemisphere = gpsProt->gps->gga.lonHemisphere;
+    auvProtocol->send_data.coordinateGPS.quality = gpsProt->gps->gga.quality;
+    auvProtocol->send_data.coordinateGPS.satellitesUsed = gpsProt->gps->gga.satellitesUsed;
+    auvProtocol->send_data.coordinateGPS.hdop = gpsProt->gps->gga.hdop;
+    auvProtocol->send_data.coordinateGPS.altitude = gpsProt->gps->gga.altitude;
+    auvProtocol->send_data.coordinateGPS.altitudeUnit = gpsProt->gps->gga.altitudeUnit;
+    auvProtocol->send_data.coordinateGPS.geoidHeight = gpsProt->gps->gga.geoidHeight;
+    auvProtocol->send_data.coordinateGPS.geoidUnit = gpsProt->gps->gga.geoidUnit;
+    auvProtocol->send_data.coordinateGPS.dgpsAge = gpsProt->gps->gga.dgpsAge;
+    auvProtocol->send_data.coordinateGPS.dgpsStationId = gpsProt->gps->gga.dgpsStationId;
 
+    auvProtocol->send_data.altitude = echolot->echo.depth;
+    auvProtocol->send_data.count_receive_gans = GANS->data.pzmae.count_answer;
+    qDebug() << "count_receive_gans" << auvProtocol->send_data.count_receive_gans;
+
+    sspData.counter +=1;
+    sspData.latitudeReper = auvProtocol->rec_data.reper.x_point;
+    sspData.longitudeReper= auvProtocol->rec_data.reper.y_point;
+    sspData.X             = current_point.x_point;
+    sspData.Y             = current_point.y_point;
+    sspData.yawMagn       = X[178][0];
+    sspData.yawIner       = X[91][0];
+    sspData.yaw           = X[61][0];
+    sspData.pitch         = X[62][0];
+    sspData.roll          = X[63][0];
+    sspData.X_accel       = X[64][0];
+    sspData.Y_accel       = X[65][0];
+    sspData.Z_accel       = X[66][0];
+    sspData.X_rate        = X[67][0];
+    sspData.Y_rate        = X[68][0];
+    sspData.Z_rate        = X[69][0];
+    sspData.X_magn        = X[70][0];
+    sspData.Y_magn        = X[71][0];
+    sspData.Z_magn        = X[72][0];
+    sspData.quat[0]       = X[73][0];
+    sspData.quat[1]       = X[74][0];
+    sspData.quat[2]       = X[75][0];
+    sspData.quat[3]       = X[76][0];
+    sspData.VMA1          = X[80][0];
+    sspData.VMA2          = X[81][0];
+    sspData.VMA3          = X[82][0];
+    sspData.VMA4          = X[83][0];
+    sspData.flag_yaw      = contour_closure_yaw;
+    sspData.flag_pitch    = contour_closure_pitch;
+    sspData.flag_roll     = contour_closure_roll;
+    sspData.flag_march    = contour_closure_march;
+    sspData.flag_depth    = contour_closure_depth;
+    sspData.flag_lag      = contour_closure_lag;
+    sspData.modeReal      = flag_of_mode;
+    sspData.yawSet = X[5][0];
+    sspData.latitudePerpose = auvProtocol->rec_data.mission_param.point_mission.x_point;
+    sspData.longitudePerpose = auvProtocol->rec_data.mission_param.point_mission.y_point;
+    emit updateSSP(&sspData);
 }
 
 void CS_USV::aperiodicFilter(double &input, double &output, double &prevOutput, double K, double T, double dt)

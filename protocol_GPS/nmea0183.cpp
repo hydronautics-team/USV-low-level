@@ -30,6 +30,8 @@ void NMEA0183::readData()
 //    qDebug() << gps_buffer;
     // gps_buffer.clear();
     parseBuffer();
+//    qDebug() <<"emit updateGPS(*gps)";
+
 }
 
 TitleNMEA stringToTitle(const QByteArray &tit)
@@ -143,7 +145,9 @@ void NMEA0183::findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray
 //            parseGPTXT(msg);
             break;
         case GPGGA:
+            gps->gga.count+=1;
             parseGPGGA(msg);
+            emit updateGPS(gps);
             break;
         case GPGSA:
 //            parseGPGSA(msg);
@@ -152,9 +156,13 @@ void NMEA0183::findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray
 //            parseGPGSV(msg);
             break;
         case GPGLL:
+            gps->gll.count+=1;
             parseGPGLL(msg);
+            emit updateGPS(gps);
         case GNGLL:
+            gps->gll.count+=1;
             parseGPGLL(msg);
+            emit updateGPS(gps);
             break;
         case GNRMC:
 //            parseGNRMC(msg);
@@ -166,7 +174,9 @@ void NMEA0183::findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray
 //            parseGNGSA(msg);
             break;
         case GNGGA:
+            gps->gga.count+=1;
             parseGPGGA(msg);
+            emit updateGPS(gps);
             break;
         case GPZDA:
 //            parseGPZDA(msg);
@@ -184,7 +194,9 @@ void NMEA0183::findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray
 //            parseROT(msg);
             break;
         case PSAT:
+            gps->psat.count+=1;
             parsePSAT(msg);
+            emit updateGPS(gps);
             break;
         case PRDCU:
 //            parsePRDCU(msg);
@@ -196,7 +208,9 @@ void NMEA0183::findTitleNMEA(qint8 &index, qint8 &crc_in, qint8 &end, QByteArray
 //            parseGLGSA(msg);
             break;
         case GLGGA:
+            gps->gga.count+=1;
             parseGPGGA(msg);
+            emit updateGPS(gps);
             break;
         case GLRMC:
 //            parseGLRMC(msg);
@@ -470,25 +484,42 @@ void NMEA0183::parseGPTXT(QByteArray msg)
 void NMEA0183::parseGPGGA(QByteArray &msg)
 {
     // Пример сообщения: $GPGGA,123519.00,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
+//    qDebug() << "parseGPGGA msg:" << msg;
     if(test_message)qDebug() << msg;
     QList list = msg.split(',');
     gps->gga.time = QTime::fromString(list[1], "hhmmss.z");
 //    gps->gga.time = list[1].toDouble();
-    gps->gga.latitude       = list[2].toDouble();
-    if (list[3].size()>0) gps->gga.latHemisphere  = QString::fromUtf8(list[3]);
-    gps->gga.longitude      = list[4].toDouble();
-    if (list[5].size()>0) gps->gga.lonHemisphere  = QString::fromUtf8(list[5]);
+    double tmp = list[2].toDouble();
+    int intTmp = 0;
+    if (tmp>0)
+    {
+        intTmp = static_cast<int>(tmp)/100;
+        tmp = (tmp - 100*intTmp)/60.0;
+        gps->gga.latitude = intTmp+tmp;
+    }
+    tmp = list[4].toDouble();
+    if (tmp>0)
+    {
+        intTmp = static_cast<int>(tmp)/100;
+        tmp = (tmp - 100*intTmp)/60.0;
+        gps->gga.longitude = intTmp+tmp;
+    }
+//    gps->gga.latitude       = list[2].toDouble();
+    if (list[3].size()>0) gps->gga.latHemisphere  = list[3][0];
+//    gps->gga.longitude      = list[4].toDouble();QString::fromUtf8(list[3])
+    if (list[5].size()>0) gps->gga.lonHemisphere  = list[5][0];
     gps->gga.quality        = list[6].toInt();
     gps->gga.satellitesUsed = list[7].toInt();
     gps->gga.hdop           = list[8].toDouble();
     gps->gga.altitude       = list[9].toDouble();
-    if (list[10].size()>0) gps->gga.altitudeUnit   = QString::fromUtf8(list[10]);
+    if (list[10].size()>0) gps->gga.altitudeUnit   = list[10][0];
     gps->gga.geoidHeight    = list[11].toDouble();
-    if (list[12].size()>0) gps->gga.geoidUnit      = QString::fromUtf8(list[12]);
+    if (list[12].size()>0) gps->gga.geoidUnit      = list[12][0];
     gps->gga.dgpsAge        = list[13].toDouble();
     gps->gga.dgpsStationId  = list[14].toInt();
 
-    qDebug() << "gps->gga.time" <<      gps->gga.time  ;
+
+//    qDebug() << "gps->gga.time" <<      gps->gga.time  ;
     qDebug() << "gps->gga.latitude" <<  QString::number(gps->gga.latitude ,'f', 16);
     qDebug() << "gps->gga.longitude" << QString::number(gps->gga.longitude,'f', 16);
     if(test_message) qDebug() << "GPGGA Parsed";
@@ -605,12 +636,13 @@ void NMEA0183::parsePSAT(QByteArray &msg)
     QList list = msg.split(',');
     gps->psat.time = QTime::fromString(list[2], "hhmmss.z");
     gps->psat.yaw   = list[3].toDouble();
+    qDebug() << "gps->psat.yaw" << gps->psat.yaw;
     gps->psat.pitch = list[4].toDouble();
     gps->psat.roll  = list[5].toDouble();
 //    qDebug() << "gps->psat.yaw   ==" << gps->psat.yaw   ;
 //    qDebug() << "gps->psat.pitch ==" << gps->psat.pitch ;
 //    qDebug() << "gps->psat.roll  ==" << gps->psat.roll  ;
-    if (list[6].size()>0) gps->psat.dataType = QString::fromUtf8(list[6]);
+    if (list[6].size()>0) gps->psat.dataType = list[6][0];
 //    if(test_message) qDebug() << "PSAT Parsed";
 }
 

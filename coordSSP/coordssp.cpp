@@ -56,10 +56,10 @@ void CoordSSP::getLocalCoordinates(const GPSPoint &currentGPS, double &dx, doubl
         // Проверяем, находятся ли текущая точка и репер в одной зоне и полушарии
         if (currentUTM.zone == referenceUTM.zone && currentUTM.north == referenceUTM.north) {
             // Рассчитываем смещение от репера
-            dx = currentUTM.easting - referenceUTM.easting;
-            dy = currentUTM.northing - referenceUTM.northing;
+            dx = currentUTM.northing - referenceUTM.northing;
+            dy = currentUTM.easting - referenceUTM.easting;
 
-            qDebug() << "Текущие локальные координаты: dx =" << dx << "м, dy =" << dy << "м";
+//            qDebug() << "Текущие локальные координаты: dx =" << dx << "м, dy =" << dy << "м";
         }
         else {
             qDebug() << "Текущая точка находится в другой зоне или полушарии.";

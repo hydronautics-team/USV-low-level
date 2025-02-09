@@ -35,9 +35,24 @@ void VMA_control::senddata(){
 
 }
 void VMA_control::setvalues(double data_1, double data_2, double data_3, double data_4) {
-    vmaVector[0] = calcTicks((1.5 + data_1), HERTZ);
-    vmaVector[1] = calcTicks((1.5 + data_2), HERTZ);
-    vmaVector[2] = calcTicks((1.5 + data_3), HERTZ);
-    vmaVector[3] = calcTicks((1.5 + data_4), HERTZ);
+    static float y = 0;
+    static int z =0;
+//    if (z<4)
+//    {
+
+
+
+
+//        if (y<0.1) y +=0.001;
+//        else {y = 0;
+//            z+=1;
+//        }
+//    }
+//    else {y = 0;
+//    }
+    vmaVector[0] = calcTicks((1.5 + data_1 + y), HERTZ);
+    vmaVector[1] = calcTicks((1.5 + data_2 + y), HERTZ);
+    vmaVector[2] = calcTicks((1.5 + data_3 + y), HERTZ);
+    vmaVector[3] = calcTicks((1.5 + data_4 + y), HERTZ);
     VMA_control::senddata();
 }
